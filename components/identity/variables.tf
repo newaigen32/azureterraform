@@ -48,3 +48,21 @@ variable "user_principal_names" {
     error_message = "Each user_principal_names key must also be present in users."
   }
 }
+
+variable "rbac_assignments" {
+  description = "Azure RBAC assignments keyed by a unique name. Scopes are Azure resource IDs."
+  type = map(object({
+    group                = string
+    role_definition_name = string
+    scope                = string
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for assignment in values(var.rbac_assignments) :
+      contains(["cloud_admin", "developers", "readers", "aks_admins"], assignment.group)
+    ])
+    error_message = "RBAC assignment groups must be cloud_admin, developers, readers, or aks_admins."
+  }
+}

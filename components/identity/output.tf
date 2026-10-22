@@ -24,6 +24,11 @@ output "initial_passwords" {
   sensitive   = true
 }
 
+output "rbac_assignment_ids" {
+  description = "Azure resource IDs of the configured RBAC assignments."
+  value       = module.rbac.assignment_ids
+}
+
 output "service_principal_id" {
   value = module.application.service_principal_id
 }

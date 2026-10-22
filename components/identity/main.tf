@@ -18,3 +18,10 @@ module "users" {
   upn_suffix           = var.upn_suffix
   user_principal_names = var.user_principal_names
 }
+
+module "rbac" {
+  source = "./rbac"
+
+  assignments = var.rbac_assignments
+  group_ids   = module.groups.group_ids
+}

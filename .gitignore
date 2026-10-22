@@ -1,6 +1,11 @@
 # Terraform working directories and downloaded providers
 .terraform/
 
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+
 # Terraform state and plans
 *.tfstate
 *.tfstate.*
