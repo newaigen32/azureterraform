@@ -1,0 +1,38 @@
+# Copy this file to terraform.tfvars in this directory. Never commit the copy.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+location            = "Central India"
+resource_group_name = "aks-learning-rg"
+cluster_name        = "aks-learning"
+dns_prefix          = "aks-learning"
+sku_tier            = "Free"
+
+system_node_pool = {
+  name            = "system"
+  vm_size         = "Standard_D4pls_v5"
+  node_count      = 2
+  os_sku          = "Ubuntu"
+  os_disk_type    = "Managed"
+  os_disk_size_gb = 64
+  max_pods        = 30
+}
+
+network_profile = {
+  pod_cidr       = "10.244.0.0/16"
+  service_cidr   = "10.2.0.0/16"
+  dns_service_ip = "10.2.0.10"
+}
+
+local_account_disabled = false
+
+# Enable these only while learning the related feature.
+enable_container_registry = false
+container_registry_name   = "replacewithuniqueacrname"
+enable_container_insights = false
+
+tags = {
+  environment = "learning"
+  managed_by  = "terraform"
+  owner       = "replace-me"
+  workload    = "aks"
+}

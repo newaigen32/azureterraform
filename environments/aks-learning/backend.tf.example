@@ -1,0 +1,10 @@
+# Rename this file to backend.tf after creating an Azure Storage account and
+# container for Terraform state. Keep backend credentials outside this file.
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "terraform-state-rg"
+    storage_account_name = "replacewithstatestorage"
+    container_name       = "tfstate"
+    key                  = "aks-learning.tfstate"
+  }
+}

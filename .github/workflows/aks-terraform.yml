@@ -1,0 +1,203 @@
+name: AKS Terraform
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/aks-terraform.yml"
+      - "components/azure-aks-cluster/**"
+      - "environments/aks-learning/**"
+      - "python/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/aks-terraform.yml"
+      - "components/azure-aks-cluster/**"
+      - "environments/aks-learning/**"
+      - "python/**"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Compare infrastructure or apply the reconciled plan"
+        required: true
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
+      allow_destructive:
+        description: "Allow Terraform delete or replace actions during apply"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  quality:
+    name: Test and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install --requirement python/requirements.txt
+
+      - name: Run Python tests
+        run: python -m unittest discover -s python/tests -v
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.2"
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: |
+          terraform -chdir=components/azure-aks-cluster fmt -check -no-color
+          terraform -chdir=environments/aks-learning fmt -check -no-color
+
+      - name: Initialize Terraform without a backend
+        run: terraform -chdir=environments/aks-learning init -backend=false -input=false -no-color
+
+      - name: Validate Terraform
+        run: terraform -chdir=environments/aks-learning validate -no-color
+
+  deploy:
+    name: ${{ inputs.operation == 'apply' && 'Apply' || 'Plan' }} AKS
+    if: github.event_name == 'workflow_dispatch'
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: aks-learning
+    concurrency:
+      group: aks-learning-terraform
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_AZUREAD: "true"
+      ARM_USE_OIDC: "true"
+      AKS_TFVARS: ${{ secrets.AKS_TFVARS }}
+      TF_STATE_RESOURCE_GROUP: ${{ vars.TF_STATE_RESOURCE_GROUP }}
+      TF_STATE_STORAGE_ACCOUNT: ${{ vars.TF_STATE_STORAGE_ACCOUNT }}
+      TF_STATE_CONTAINER: ${{ vars.TF_STATE_CONTAINER }}
+      TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install --requirement python/requirements.txt
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.2"
+          terraform_wrapper: false
+
+      - name: Check pipeline configuration
+        shell: bash
+        run: |
+          required_values=(
+            ARM_CLIENT_ID
+            ARM_TENANT_ID
+            ARM_SUBSCRIPTION_ID
+            AKS_TFVARS
+            TF_STATE_RESOURCE_GROUP
+            TF_STATE_STORAGE_ACCOUNT
+            TF_STATE_CONTAINER
+            TF_STATE_KEY
+          )
+          for value_name in "${required_values[@]}"; do
+            if [[ -z "${!value_name}" ]]; then
+              echo "Missing GitHub environment secret or variable: ${value_name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create protected AKS tfvars file
+        shell: bash
+        run: |
+          umask 077
+          printf '%s\n' "${AKS_TFVARS}" > components/azure-aks-cluster/terraform.tfvars
+
+      - name: Configure Azure remote state
+        shell: bash
+        run: |
+          cp environments/aks-learning/backend.tf.example environments/aks-learning/backend.tf
+          terraform -chdir=environments/aks-learning init \
+            -input=false \
+            -no-color \
+            -reconfigure \
+            -backend-config="resource_group_name=${TF_STATE_RESOURCE_GROUP}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=${TF_STATE_KEY}" \
+            -backend-config="subscription_id=${ARM_SUBSCRIPTION_ID}" \
+            -backend-config="tenant_id=${ARM_TENANT_ID}" \
+            -backend-config="client_id=${ARM_CLIENT_ID}" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="use_oidc=true"
+
+      - name: Run AKS plan or apply
+        shell: bash
+        run: |
+          command=(
+            python
+            python/azure_aks_cluster/reconcile.py
+            --environment aks-learning
+            --var-file components/azure-aks-cluster/terraform.tfvars
+          )
+
+          if [[ "${{ inputs.operation }}" == "apply" ]]; then
+            command+=(--apply --auto-approve)
+            if [[ "${{ inputs.allow_destructive }}" == "true" ]]; then
+              command+=(--allow-destructive)
+            fi
+          fi
+
+          "${command[@]}"
+
+      - name: Remove generated configuration
+        if: always()
+        shell: bash
+        run: |
+          rm -f components/azure-aks-cluster/terraform.tfvars
+          rm -f environments/aks-learning/backend.tf

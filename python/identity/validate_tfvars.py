@@ -1,3 +1,5 @@
+"""Validate Terraform variables for Entra identity and Azure RBAC."""
+
 from __future__ import annotations
 
 import argparse
